@@ -1,8 +1,8 @@
 resource "aws_network_interface" "nic" {
-  for_each = [ for k, v in var.master_nodes_config : k  ]
-  subnet_id   = aws_subnet.subnet.id
+  for_each = var.master_nodes_config
+  subnet_id   = aws_subnet.private_subnet.id
   tags = {
-    name = "master_node-${var.master_nodes_config[each.key]}-primary_network_interface"
+    name = "master_node-${each.key}-primary_network_interface"
   }
 }
 
@@ -22,12 +22,12 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "inst" {
-  for_each = [ for k, v in var.master_nodes_config : k  ]
+  for_each = var.master_nodes_config
   ami           = data.aws_ami.ubuntu.id
   instance_type = "t2.large"
-
+  key_name = var.key_pair_id
   network_interface {
-    network_interface_id = aws_network_interface.foo.id
+    network_interface_id = aws_network_interface.nic[each.key].id
     device_index         = 0
   }
 
@@ -36,11 +36,11 @@ resource "aws_instance" "inst" {
   }
 
   tags = {
-    name = "master_node-${var.master_nodes_config[each.key]}-primary_network_interface"
+    name = "master_node-${each.key}-primary_network_interface"
   }
-  user_data = base64gzip(templatefile("${var.resources_path}/cloud-config.yaml", {
+  user_data_base64 = base64gzip(templatefile("${var.resources_path}/cloud-config.yaml", {
     node_type       = "master"
-    action          = count.index == 0 ? "init" : "join"
+    action          = each.key == "prime" ? "init" : "join"
     admin_username  = var.admin_username
     crio_version    = var.crio_version
     crio_os_version = var.crio_os_version
@@ -49,9 +49,9 @@ resource "aws_instance" "inst" {
     configs_kubeadm = base64gzip(templatefile("${var.resources_path}/configs/kubeadm-config.yaml", {
       node_type                    = "master"
       action                       = "master"
-      bootstrap_token              = data.azurerm_key_vault_secret.kv_sc_bootstrap_token.value
+      bootstrap_token              = "" #data.azurerm_key_vault_secret.kv_sc_bootstrap_token.value
       api_server_name              = var.api_server_name
-      discovery_token_ca_cert_hash = data.azurerm_key_vault_secret.kv_sc_discovery_token_ca_cert_hash.value
+      discovery_token_ca_cert_hash = "" #data.azurerm_key_vault_secret.kv_sc_discovery_token_ca_cert_hash.value
       k8s_service_subnet           = var.k8s_service_subnet
       cluster_dns                  = var.cluster_dns
       pod_subnet_cidr              = var.pods_cidr
@@ -68,7 +68,7 @@ resource "aws_instance" "inst" {
 }
 
 resource "aws_lb_target_group_attachment" "target_group_attachment_443" {
-  for_each = [ for k, v in var.master_nodes_config : k  ]
+  for_each = var.master_nodes_config
   target_group_arn = aws_lb_target_group.target_group_443.arn
   target_id        = aws_instance.inst[each.key].id
   port             = 6443
